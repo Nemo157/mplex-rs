@@ -1,28 +1,23 @@
 use std::io;
 
 use futures::{ Sink, Stream, Poll, Async, StartSend, AsyncSink };
-use futures_mpsc as mpsc;
 
 use message::Message;
 
 pub struct Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
     transport: S,
     buffer: Option<Vec<u8>>,
-    incoming: mpsc::Sender<Message>,
     max_msg_size: usize,
 }
 
 impl<S> Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
-    pub fn create(transport: S) -> (Session<S>, mpsc::Receiver<Message>) {
+    pub fn new(transport: S) -> Session<S> {
         let max_msg_size = 1 * 1024 * 1024;
-        let (sender, receiver) = mpsc::channel(0);
-        let session = Session {
+        Session {
             transport: transport,
             buffer: Some(Vec::with_capacity(max_msg_size)),
-            incoming: sender,
             max_msg_size: max_msg_size,
-        };
-        (session, receiver)
+        }
     }
 }
 
@@ -68,5 +63,9 @@ impl<S> Sink for Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error>
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         self.transport.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        self.transport.close()
     }
 }

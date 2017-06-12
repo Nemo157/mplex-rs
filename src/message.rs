@@ -2,6 +2,7 @@ use std::mem;
 use std::io;
 use varmint::{ len_u64_varint, len_usize_varint, ReadVarInt, WriteVarInt };
 
+#[derive(Eq, PartialEq, Debug, Clone, Copy)]
 pub enum Flag {
     NewStream,
     Receiver,
@@ -9,10 +10,11 @@ pub enum Flag {
     Close,
 }
 
+#[derive(Debug)]
 pub struct Message {
-    stream_id: u64,
-    flag: Flag,
-    data: Vec<u8>,
+    pub stream_id: u64,
+    pub flag: Flag,
+    pub data: Vec<u8>,
 }
 
 impl Message {

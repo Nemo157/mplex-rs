@@ -2,4 +2,4 @@
 
 ## Spec
 
-https://github.com/whyrusleeping/go-multiplex/blob/master/spec.md
+<https://github.com/whyrusleeping/go-multiplex/blob/master/spec.md>
