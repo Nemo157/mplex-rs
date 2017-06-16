@@ -1,7 +1,7 @@
 use std::mem;
 
 use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
-use futures_mpsc as mpsc;
+use futures::unsync::mpsc;
 
 use message::{ Message, Flag };
 

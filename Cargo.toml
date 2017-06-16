@@ -5,5 +5,4 @@ version = "0.1.0"
 
 [dependencies]
 futures = "0.1.14"
-futures-mpsc = "0.1.0"
 varmint = "0.1.2"
