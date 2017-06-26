@@ -2,7 +2,7 @@ use std::io;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use futures::{ future, Future, Sink, Stream, Poll, Async, AsyncSink };
+use futures::{ self, Future, Sink, Stream, Poll, Async, AsyncSink };
 use futures::unsync::mpsc;
 
 use stream::{ self, MultiplexStream };
@@ -15,28 +15,26 @@ pub enum Error {
 }
 
 pub struct Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
-    session: Session<S>,
+    session_stream: futures::stream::SplitStream<Session<S>>,
     initiator: bool,
     next_id: u64,
     stream_senders: HashMap<u64, mpsc::Sender<Message>>,
     busy_streams: Vec<u64>,
     out_sender: mpsc::Sender<Message>,
-    out_receiver: mpsc::Receiver<Message>,
-    outstanding_msg: Option<Message>,
+    forward: futures::stream::Forward<futures::stream::MapErr<mpsc::Receiver<Message>, fn(()) -> Error>, futures::stream::SplitSink<Session<S>>>,
 }
 
 impl<S> Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
     pub fn new(transport: S, initiator: bool) -> Multiplexer<S> {
         let (out_sender, out_receiver) = mpsc::channel(1);
+        let session = Session::new(transport);
+        let (session_sink, session_stream) = session.split();
+        let forward = out_receiver.map_err(Error::from as _).forward(session_sink);
         Multiplexer {
-            session: Session::new(transport),
-            initiator: initiator,
             next_id: 0,
             stream_senders: Default::default(),
             busy_streams: Default::default(),
-            out_sender,
-            out_receiver,
-            outstanding_msg: None,
+            session_stream, initiator, out_sender, forward,
         }
     }
 
@@ -56,8 +54,9 @@ impl<S> Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + St
     }
 
     pub fn close(self) -> impl Future<Item=(), Error=Error> {
-        let mut session = self.session;
-        future::poll_fn(move || session.close().map_err(Error::from))
+        // Maybe? I think a wave of closure should propagate through from dropping everything else
+        // in self.
+        self.forward.map(|_| ())
     }
 }
 
@@ -68,7 +67,7 @@ impl<S> Future for Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             // Check if we have an incoming message from our peer to handle
-            match self.session.poll()? {
+            match self.session_stream.poll()? {
                 Async::Ready(Some(msg)) => {
                     let stream_id = msg.stream_id;
                     if let Entry::Occupied(mut entry) = self.stream_senders.entry(stream_id) {
@@ -79,8 +78,8 @@ impl<S> Future for Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::
                             Ok(AsyncSink::NotReady(msg)) => {
                                 println!("Dropping incoming message {:?} as stream is busy", msg);
                             }
-                            Err(_) => {
-                                // The stream was closed
+                            Err(err) => {
+                                println!("Multiplexer stream {} was closed: {:?}", stream_id, err);
                                 entry.remove();
                             }
                         }
@@ -105,39 +104,31 @@ impl<S> Future for Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::
             self.busy_streams.retain(|&stream_id| {
                 if let Some(ref mut stream_sender) = stream_senders.get_mut(&stream_id) {
                     if let Ok(Async::NotReady) = stream_sender.poll_complete() {
+                        // Not finished yet, will have been parked and we need to check it again
+                        // next loop.
                         true
                     } else {
+                        // Either it finished and we no longer need to poll, or it has errored...,
+                        // I think we're ok to ignore the error here and it will be handled
+                        // elsewhere.
                         false
                     }
                 } else {
+                    // The stream has closed and been removed elsewhere
                     false
                 }
             });
 
-            if let Some(msg) = self.outstanding_msg.take() {
-                match self.session.start_send(msg)? {
-                    AsyncSink::Ready => (),
-                    AsyncSink::NotReady(msg) => {
-                        self.outstanding_msg = Some(msg);
-                    }
+            // Let the forwarder propagate any message from the streams to the session
+            match self.forward.poll()? {
+                Async::Ready(_) => {
+                    // Incoming stream was closed?
+                    return Ok(Async::Ready(()));
                 }
-            } else {
-                match self.out_receiver.poll()? {
-                    Async::Ready(Some(msg)) => {
-                        self.outstanding_msg = Some(msg);
-                        continue;
-                    }
-                    Async::Ready(None) => unreachable!(),
-                    Async::NotReady => (),
+                Async::NotReady => {
+                    return Ok(Async::NotReady);
                 }
             }
-
-            match self.session.poll_complete()? {
-                Async::Ready(()) => (),
-                Async::NotReady => (),
-            }
-
-            return Ok(Async::NotReady);
         }
     }
 }
