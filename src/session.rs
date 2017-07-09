@@ -1,52 +1,37 @@
 use std::io;
 
 use futures::{ Sink, Stream, Poll, Async, StartSend, AsyncSink };
+use msgio::MsgIo;
 
 use message::Message;
 
-pub struct Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+pub struct Session<S: MsgIo> {
     transport: S,
-    buffer: Option<Vec<u8>>,
-    max_msg_size: usize,
 }
 
-impl<S> Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+impl<S: MsgIo> Session<S> {
     pub fn new(transport: S) -> Session<S> {
-        let max_msg_size = 1 * 1024 * 1024;
         Session {
             transport: transport,
-            buffer: Some(Vec::with_capacity(max_msg_size)),
-            max_msg_size: max_msg_size,
         }
     }
 }
 
-impl<S> Stream for Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+impl<S: MsgIo> Stream for Session<S> {
     type Item = Message;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        while let Some(mut block) = try_ready!(self.transport.poll()) {
-            let mut buffer = self.buffer.take().expect("We always replace it after use");
-            buffer.append(&mut block);
-            let (msg, buffer) = Message::try_from(buffer)?;
-            if let Some(msg) = msg {
-                self.buffer = Some(buffer);
-                return Ok(Async::Ready(Some(msg)));
-            } else if buffer.len() > self.max_msg_size + 20 { // TODO: Must be enough of a buffer for 2 128 bit varints
-                self.buffer = Some(buffer);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Exceeded max message size"));
-            }
-        }
-        if self.buffer.as_ref().expect("We always replace it after use").is_empty() {
-            Ok(Async::Ready(None))
+        if let Some(buffer) = try_ready!(self.transport.poll()) {
+            let msg = Message::try_from(buffer)?;
+            Ok(Async::Ready(Some(msg)))
         } else {
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, ""))
+            Ok(Async::Ready(None))
         }
     }
 }
 
-impl<S> Sink for Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+impl<S: MsgIo> Sink for Session<S> {
     type SinkItem = Message;
     type SinkError = io::Error;
 
@@ -54,7 +39,7 @@ impl<S> Sink for Session<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error>
         Ok(match self.transport.start_send(item.into_bytes())? {
             AsyncSink::Ready => AsyncSink::Ready,
             AsyncSink::NotReady(bytes) => {
-                let msg = Message::try_from(bytes)?.0
+                let msg = Message::try_from(bytes)
                     .expect("We created it, it has to be good");
                 AsyncSink::NotReady(msg)
             }

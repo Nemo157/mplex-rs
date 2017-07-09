@@ -1,14 +1,15 @@
-use std::mem;
+use std::{io, mem};
 
 use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
 use futures::unsync::mpsc;
+use msgio::MsgIo;
 
 use message::{ Message, Flag };
 
-pub struct Error(mpsc::SendError<Message>);
-
+#[derive(Debug)]
 pub struct MultiplexStream(StreamImpl);
 
+#[derive(Debug)]
 pub enum StreamImpl {
     Active {
         id: u64,
@@ -27,13 +28,13 @@ pub enum StreamImpl {
 }
 
 impl MultiplexStream {
-    pub(crate) fn new(id: u64, flag: Flag, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> impl Future<Item=MultiplexStream, Error=Error> {
+    pub(crate) fn new(id: u64, flag: Flag, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> impl Future<Item=MultiplexStream, Error=io::Error> {
         outgoing.send(Message {
                 stream_id: id,
                 flag: Flag::NewStream,
                 data: Vec::new(),
             })
-            .map_err(From::from)
+            .map_err(other)
             .map(move |outgoing| {
                 MultiplexStream(StreamImpl::Active {
                     id, flag, incoming, outgoing
@@ -44,7 +45,7 @@ impl MultiplexStream {
 
 impl Stream for MultiplexStream {
     type Item = Vec<u8>;
-    type Error = ();
+    type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.0.poll()
@@ -53,7 +54,7 @@ impl Stream for MultiplexStream {
 
 impl Sink for MultiplexStream {
     type SinkItem = Vec<u8>;
-    type SinkError = Error;
+    type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         self.0.start_send(item)
@@ -68,14 +69,16 @@ impl Sink for MultiplexStream {
     }
 }
 
+impl MsgIo for MultiplexStream { }
+
 impl Stream for StreamImpl {
     type Item = Vec<u8>;
-    type Error = ();
+    type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match *self {
             StreamImpl::Active { ref mut incoming, .. } => {
-                match try_ready!(incoming.poll()) {
+                match try_ready!(incoming.poll().map_err(unknown)) {
                     None => {
                         return Ok(Async::Ready(None));
                     }
@@ -99,7 +102,7 @@ impl Stream for StreamImpl {
 
 impl Sink for StreamImpl {
     type SinkItem = Vec<u8>;
-    type SinkError = Error;
+    type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         match *self {
@@ -109,7 +112,7 @@ impl Sink for StreamImpl {
                     flag: flag,
                     data: item,
                 };
-                Ok(match outgoing.start_send(msg)? {
+                Ok(match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => AsyncSink::Ready,
                     AsyncSink::NotReady(msg) => AsyncSink::NotReady(msg.data),
                 })
@@ -121,7 +124,7 @@ impl Sink for StreamImpl {
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         Ok(match *self {
             StreamImpl::Active { ref mut outgoing, .. } => {
-                outgoing.poll_complete()?
+                outgoing.poll_complete().map_err(other)?
             }
             _ => panic!("Called poll_complete after close"),
         })
@@ -138,7 +141,7 @@ impl Sink for StreamImpl {
                     flag: Flag::Close,
                     data: Vec::new(),
                 };
-                match outgoing.start_send(msg)? {
+                match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => {
                         StreamImpl::ClosingOutgoing { outgoing }
                     }
@@ -148,7 +151,7 @@ impl Sink for StreamImpl {
                 }
             }
             StreamImpl::ClosingOutgoing { mut outgoing } => {
-                match outgoing.close()? {
+                match outgoing.close().map_err(other)? {
                     Async::Ready(()) => {
                         StreamImpl::Closed
                     }
@@ -165,6 +168,10 @@ impl Sink for StreamImpl {
     }
 }
 
-impl From<mpsc::SendError<Message>> for Error {
-    fn from(err: mpsc::SendError<Message>) -> Error { Error(err) }
+fn unknown(_: ()) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, "Unknown error")
+}
+
+fn other<T: ::std::error::Error + Send + Sync + 'static>(err: T) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, err)
 }

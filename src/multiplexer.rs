@@ -4,32 +4,29 @@ use std::collections::hash_map::Entry;
 
 use futures::{ self, Future, Sink, Stream, Poll, Async, AsyncSink };
 use futures::unsync::mpsc;
+use msgio::MsgIo;
 
-use stream::{ self, MultiplexStream };
+use stream::MultiplexStream;
 use message::{ Message, Flag };
 use session::Session;
 
-pub enum Error {
-    Send(stream::Error),
-    IO(io::Error),
-}
-
-pub struct Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+pub struct Multiplexer<S: MsgIo> {
     session_stream: futures::stream::SplitStream<Session<S>>,
     initiator: bool,
     next_id: u64,
     stream_senders: HashMap<u64, mpsc::Sender<Message>>,
     busy_streams: Vec<u64>,
     out_sender: mpsc::Sender<Message>,
-    forward: futures::stream::Forward<futures::stream::MapErr<mpsc::Receiver<Message>, fn(()) -> Error>, futures::stream::SplitSink<Session<S>>>,
+    forward: futures::stream::Forward<futures::stream::MapErr<mpsc::Receiver<Message>, fn(()) -> io::Error>, futures::stream::SplitSink<Session<S>>>,
 }
 
-impl<S> Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+impl<S: MsgIo> Multiplexer<S> {
     pub fn new(transport: S, initiator: bool) -> Multiplexer<S> {
+        fn unreachable(_: ()) -> io::Error { unreachable!() }
         let (out_sender, out_receiver) = mpsc::channel(1);
         let session = Session::new(transport);
         let (session_sink, session_stream) = session.split();
-        let forward = out_receiver.map_err(Error::from as _).forward(session_sink);
+        let forward = out_receiver.map_err(unreachable as _).forward(session_sink);
         Multiplexer {
             next_id: 0,
             stream_senders: Default::default(),
@@ -44,25 +41,24 @@ impl<S> Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + St
         if self.initiator { id + 1 } else { id }
     }
 
-    pub fn new_stream(&mut self) -> impl Future<Item=MultiplexStream, Error=Error> {
+    pub fn new_stream(&mut self) -> impl Future<Item=MultiplexStream, Error=io::Error> {
         let id = self.next_id();
         let flag = if self.initiator { Flag::Initiator } else { Flag::Receiver };
         let (in_sender, in_receiver) = mpsc::channel(1);
         self.stream_senders.insert(id, in_sender);
         MultiplexStream::new(id, flag, in_receiver, self.out_sender.clone())
-            .map_err(Error::from)
     }
 
-    pub fn close(self) -> impl Future<Item=(), Error=Error> {
+    pub fn close(self) -> impl Future<Item=(), Error=io::Error> {
         // Maybe? I think a wave of closure should propagate through from dropping everything else
         // in self.
         self.forward.map(|_| ())
     }
 }
 
-impl<S> Future for Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::Error> + Stream<Item=Vec<u8>, Error=io::Error> {
+impl<S: MsgIo> Future for Multiplexer<S> {
     type Item = ();
-    type Error = Error;
+    type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
@@ -131,16 +127,4 @@ impl<S> Future for Multiplexer<S> where S: Sink<SinkItem=Vec<u8>, SinkError=io::
             }
         }
     }
-}
-
-impl From<stream::Error> for Error {
-    fn from(err: stream::Error) -> Error { Error::Send(err) }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error { Error::IO(err) }
-}
-
-impl From<()> for Error {
-    fn from(_err: ()) -> Error { unreachable!() }
 }

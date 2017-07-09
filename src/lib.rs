@@ -5,6 +5,7 @@
 #[macro_use]
 extern crate futures;
 extern crate varmint;
+extern crate msgio;
 
 mod message;
 mod session;
@@ -12,3 +13,4 @@ mod stream;
 mod multiplexer;
 
 pub use multiplexer::Multiplexer;
+pub use stream::MultiplexStream as Stream;

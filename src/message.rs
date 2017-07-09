@@ -1,4 +1,3 @@
-use std::mem;
 use std::io;
 use varmint::{ len_u64_varint, len_usize_varint, ReadVarInt, WriteVarInt };
 
@@ -18,7 +17,7 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn try_from(mut bytes: Vec<u8>) -> io::Result<(Option<Message>, Vec<u8>)> {
+    pub fn try_from(mut bytes: Vec<u8>) -> io::Result<Message> {
         let (flag, stream_id, len, prefix_len) = {
             // TODO: Specified to be base128, but a 61 bit stream id space should
             // be enough for anyone, right?
@@ -26,7 +25,7 @@ impl Message {
                 if let Some(header) = (&bytes[..]).try_read_u64_varint()? {
                     header
                 } else {
-                    return Ok((None, bytes));
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Underfull message: missing header"));
                 }
             };
 
@@ -36,7 +35,7 @@ impl Message {
                 2 => Flag::Initiator,
                 4 => Flag::Close,
                 3 | 5 | 6 | 7 => {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown flag"))
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown flag"));
                 }
                 _ => unreachable!(),
             };
@@ -50,7 +49,7 @@ impl Message {
                 if let Some(len) = (&bytes[len_u64_varint(header)..]).try_read_usize_varint()? {
                     len
                 } else {
-                    return Ok((None, bytes));
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Underfull message: missing length"));
                 }
             };
 
@@ -58,18 +57,16 @@ impl Message {
         };
 
         if bytes.len() < prefix_len + len {
-            return Ok((None, bytes));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Underfull message: short data"));
+        } else if bytes.len() > prefix_len + len {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Overfull message"));
         }
 
-        let mut leftover = bytes.split_off(prefix_len + len);
-        mem::swap(&mut leftover, &mut bytes);
-        let data = bytes.split_off(prefix_len);
-
-        Ok((Some(Message {
+        Ok(Message {
             stream_id: stream_id,
-            data: data,
+            data: bytes.split_off(prefix_len),
             flag: flag
-        }), leftover))
+        })
     }
 
     pub fn into_bytes(mut self) -> Vec<u8> {

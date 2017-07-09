@@ -6,3 +6,4 @@ version = "0.1.0"
 [dependencies]
 futures = "0.1.14"
 varmint = "0.1.2"
+msgio = { path = "../msgio-rs/" }
