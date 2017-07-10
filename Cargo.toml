@@ -4,6 +4,10 @@ name = "mplex"
 version = "0.1.0"
 
 [dependencies]
+bytes = "0.4.4"
 futures = "0.1.14"
+tokio-io = "0.1.2"
 varmint = "0.1.2"
-msgio = { path = "../msgio-rs/" }
+
+[dependencies.msgio]
+path = "../msgio-rs/"

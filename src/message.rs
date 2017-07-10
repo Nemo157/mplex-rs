@@ -1,4 +1,7 @@
 use std::io;
+
+use bytes::{BufMut, Bytes, BytesMut};
+use tokio_io::codec::{ Decoder, Encoder };
 use varmint::{ len_u64_varint, len_usize_varint, ReadVarInt, WriteVarInt };
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy)]
@@ -13,19 +16,25 @@ pub enum Flag {
 pub struct Message {
     pub stream_id: u64,
     pub flag: Flag,
-    pub data: Vec<u8>,
+    pub data: Bytes,
 }
 
-impl Message {
-    pub fn try_from(mut bytes: Vec<u8>) -> io::Result<Message> {
+#[derive(Debug)]
+pub struct Codec;
+
+impl Decoder for Codec {
+    type Item = Message;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let (flag, stream_id, len, prefix_len) = {
             // TODO: Specified to be base128, but a 61 bit stream id space should
             // be enough for anyone, right?
             let header = {
-                if let Some(header) = (&bytes[..]).try_read_u64_varint()? {
+                if let Some(header) = src.as_ref().try_read_u64_varint()? {
                     header
                 } else {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Underfull message: missing header"));
+                    return Ok(None);
                 }
             };
 
@@ -46,42 +55,44 @@ impl Message {
             // limited to much less than that reading a 64 bit/32 bit length should
             // be fine, right?
             let len = {
-                if let Some(len) = (&bytes[len_u64_varint(header)..]).try_read_usize_varint()? {
+                if let Some(len) = (&src[len_u64_varint(header)..]).try_read_usize_varint()? {
                     len
                 } else {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Underfull message: missing length"));
+                    return Ok(None);
                 }
             };
 
             (flag, stream_id, len, len_u64_varint(header) + len_usize_varint(len))
         };
 
-        if bytes.len() < prefix_len + len {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Underfull message: short data"));
-        } else if bytes.len() > prefix_len + len {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Overfull message"));
+        if src.len() < prefix_len + len {
+            return Ok(None);
         }
 
-        Ok(Message {
-            stream_id: stream_id,
-            data: bytes.split_off(prefix_len),
-            flag: flag
-        })
-    }
+        let _discarded = src.split_to(prefix_len);
+        let data = src.split_to(len).freeze();
 
-    pub fn into_bytes(mut self) -> Vec<u8> {
-        let header = (self.stream_id << 3) & match self.flag {
+        Ok(Some(Message { stream_id, data, flag }))
+    }
+}
+
+impl Encoder for Codec {
+    type Item = Message;
+    type Error = io::Error;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let header = (item.stream_id << 3) & match item.flag {
             Flag::NewStream => 0,
             Flag::Receiver => 1,
             Flag::Initiator => 2,
             Flag::Close => 4,
         };
-        let len = self.data.len();
+        let len = item.data.len();
         let prefix_len = len_u64_varint(header) + len_usize_varint(len);
-        let mut bytes = Vec::with_capacity(prefix_len + len);
-        bytes.write_u64_varint(header).unwrap();
-        bytes.write_usize_varint(len).unwrap();
-        bytes.append(&mut self.data);
-        bytes
+        dst.reserve(prefix_len + len);
+        dst.writer().write_u64_varint(header).unwrap();
+        dst.writer().write_usize_varint(len).unwrap();
+        dst.put(item.data);
+        Ok(())
     }
 }

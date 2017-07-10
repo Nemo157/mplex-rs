@@ -1,18 +1,22 @@
 use std::io;
 
+use bytes::BytesMut;
 use futures::{ Sink, Stream, Poll, Async, StartSend, AsyncSink };
 use msgio::MsgIo;
+use tokio_io::codec::{Encoder, Decoder};
 
-use message::Message;
+use message::{Codec, Message};
 
 pub struct Session<S: MsgIo> {
     transport: S,
+    buffer: BytesMut,
 }
 
 impl<S: MsgIo> Session<S> {
     pub fn new(transport: S) -> Session<S> {
         Session {
             transport: transport,
+            buffer: BytesMut::new(),
         }
     }
 }
@@ -22,12 +26,14 @@ impl<S: MsgIo> Stream for Session<S> {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if let Some(buffer) = try_ready!(self.transport.poll()) {
-            let msg = Message::try_from(buffer)?;
-            Ok(Async::Ready(Some(msg)))
-        } else {
-            Ok(Async::Ready(None))
+        while let Some(chunk) = try_ready!(self.transport.poll()) {
+            self.buffer.extend_from_slice(&chunk);
+            if let Some(msg) = Codec.decode(&mut self.buffer)? {
+                println!("mplex session poll msg: {:?}", msg);
+                return Ok(Async::Ready(Some(msg)));
+            }
         }
+        Ok(Async::Ready(None))
     }
 }
 
@@ -36,10 +42,12 @@ impl<S: MsgIo> Sink for Session<S> {
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        Ok(match self.transport.start_send(item.into_bytes())? {
+        let mut buffer = BytesMut::new();
+        Codec.encode(item, &mut buffer)?;
+        Ok(match self.transport.start_send(buffer.to_vec())? {
             AsyncSink::Ready => AsyncSink::Ready,
             AsyncSink::NotReady(bytes) => {
-                let msg = Message::try_from(bytes)
+                let msg = Codec.decode(&mut BytesMut::from(bytes))?
                     .expect("We created it, it has to be good");
                 AsyncSink::NotReady(msg)
             }

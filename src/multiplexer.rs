@@ -38,7 +38,7 @@ impl<S: MsgIo> Multiplexer<S> {
     fn next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 2;
-        if self.initiator { id + 1 } else { id }
+        if self.initiator { id } else { id + 1 }
     }
 
     pub fn new_stream(&mut self) -> impl Future<Item=MultiplexStream, Error=io::Error> {
@@ -79,6 +79,8 @@ impl<S: MsgIo> Future for Multiplexer<S> {
                                 entry.remove();
                             }
                         }
+                    } else if msg.flag == Flag::NewStream {
+                        println!("TODO: Handle incoming stream request {:?}", msg);
                     } else {
                         println!("Dropping incoming message {:?} as stream is closed", msg);
                     }

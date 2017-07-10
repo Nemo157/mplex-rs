@@ -1,5 +1,6 @@
 use std::{io, mem};
 
+use bytes::Bytes;
 use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
 use futures::unsync::mpsc;
 use msgio::MsgIo;
@@ -32,7 +33,7 @@ impl MultiplexStream {
         outgoing.send(Message {
                 stream_id: id,
                 flag: Flag::NewStream,
-                data: Vec::new(),
+                data: Bytes::new(),
             })
             .map_err(other)
             .map(move |outgoing| {
@@ -84,7 +85,7 @@ impl Stream for StreamImpl {
                     }
                     Some(msg) => {
                         if msg.flag != Flag::Close {
-                            return Ok(Async::Ready(Some(msg.data)));
+                            return Ok(Async::Ready(Some(msg.data.to_vec())));
                         }
                     }
                 }
@@ -110,11 +111,15 @@ impl Sink for StreamImpl {
                 let msg = Message {
                     stream_id: id,
                     flag: flag,
-                    data: item,
+                    data: Bytes::from(item),
                 };
+                println!("mplex stream start_send {:?}", msg);
                 Ok(match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => AsyncSink::Ready,
-                    AsyncSink::NotReady(msg) => AsyncSink::NotReady(msg.data),
+                    AsyncSink::NotReady(msg) => {
+                        println!("mplex stream start_send not ready");
+                        AsyncSink::NotReady(msg.data.to_vec())
+                    }
                 })
             }
             _ => panic!("Called start_send after close"),
@@ -139,7 +144,7 @@ impl Sink for StreamImpl {
                 let msg = Message {
                     stream_id: id,
                     flag: Flag::Close,
-                    data: Vec::new(),
+                    data: Bytes::new(),
                 };
                 match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => {
