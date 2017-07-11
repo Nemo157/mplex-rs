@@ -1,6 +1,6 @@
-use std::io;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::io;
 
 use futures::{ self, Future, Sink, Stream, Poll, Async, AsyncSink };
 use futures::unsync::mpsc;
@@ -43,10 +43,9 @@ impl<S: MsgIo> Multiplexer<S> {
 
     pub fn new_stream(&mut self) -> impl Future<Item=MultiplexStream, Error=io::Error> {
         let id = self.next_id();
-        let flag = if self.initiator { Flag::Initiator } else { Flag::Receiver };
         let (in_sender, in_receiver) = mpsc::channel(1);
         self.stream_senders.insert(id, in_sender);
-        MultiplexStream::new(id, flag, in_receiver, self.out_sender.clone())
+        MultiplexStream::initiate(id, in_receiver, self.out_sender.clone())
     }
 
     pub fn close(self) -> impl Future<Item=(), Error=io::Error> {
@@ -56,33 +55,41 @@ impl<S: MsgIo> Multiplexer<S> {
     }
 }
 
-impl<S: MsgIo> Future for Multiplexer<S> {
-    type Item = ();
+
+impl<S: MsgIo> Stream for Multiplexer<S> {
+    type Item = MultiplexStream;
     type Error = io::Error;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         loop {
             // Check if we have an incoming message from our peer to handle
             match self.session_stream.poll()? {
                 Async::Ready(Some(msg)) => {
                     let stream_id = msg.stream_id;
-                    if let Entry::Occupied(mut entry) = self.stream_senders.entry(stream_id) {
-                        match entry.get_mut().start_send(msg) {
-                            Ok(AsyncSink::Ready) => {
-                                self.busy_streams.push(stream_id);
-                            }
-                            Ok(AsyncSink::NotReady(msg)) => {
-                                println!("Dropping incoming message {:?} as stream is busy", msg);
-                            }
-                            Err(err) => {
-                                println!("Multiplexer stream {} was closed: {:?}", stream_id, err);
-                                entry.remove();
+                    match self.stream_senders.entry(stream_id) {
+                        Entry::Occupied(mut entry) => {
+                            match entry.get_mut().start_send(msg) {
+                                Ok(AsyncSink::Ready) => {
+                                    self.busy_streams.push(stream_id);
+                                }
+                                Ok(AsyncSink::NotReady(msg)) => {
+                                    println!("Dropping incoming message {:?} as stream is busy", msg);
+                                }
+                                Err(err) => {
+                                    println!("Multiplexer stream {} was closed: {:?}", stream_id, err);
+                                    entry.remove();
+                                }
                             }
                         }
-                    } else if msg.flag == Flag::NewStream {
-                        println!("TODO: Handle incoming stream request {:?}", msg);
-                    } else {
-                        println!("Dropping incoming message {:?} as stream is closed", msg);
+                        Entry::Vacant(entry) => {
+                            if msg.flag == Flag::NewStream {
+                                let (in_sender, in_receiver) = mpsc::channel(1);
+                                entry.insert(in_sender);
+                                return Ok(Async::Ready(Some(MultiplexStream::receive(msg.stream_id, in_receiver, self.out_sender.clone()))));
+                            } else {
+                                println!("Dropping incoming message {:?} as stream was not opened/is closed", msg);
+                            }
+                        }
                     }
                     // We need to loop back to give self.session a chance to park itself
                     continue;
@@ -91,7 +98,7 @@ impl<S: MsgIo> Future for Multiplexer<S> {
                     // The transport was closed, by dropping all the stream senders the streams
                     // will close
                     self.stream_senders.drain();
-                    return Ok(Async::Ready(()));
+                    return Ok(Async::Ready(None));
                 }
                 Async::NotReady => (),
             }
@@ -121,7 +128,7 @@ impl<S: MsgIo> Future for Multiplexer<S> {
             match self.forward.poll()? {
                 Async::Ready(_) => {
                     // Incoming stream was closed?
-                    return Ok(Async::Ready(()));
+                    return Ok(Async::Ready(None));
                 }
                 Async::NotReady => {
                     return Ok(Async::NotReady);

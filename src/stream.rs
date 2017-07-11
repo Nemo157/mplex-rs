@@ -29,7 +29,7 @@ pub enum StreamImpl {
 }
 
 impl MultiplexStream {
-    pub(crate) fn new(id: u64, flag: Flag, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> impl Future<Item=MultiplexStream, Error=io::Error> {
+    pub(crate) fn initiate(id: u64, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> impl Future<Item=MultiplexStream, Error=io::Error> {
         outgoing.send(Message {
                 stream_id: id,
                 flag: Flag::NewStream,
@@ -38,9 +38,15 @@ impl MultiplexStream {
             .map_err(other)
             .map(move |outgoing| {
                 MultiplexStream(StreamImpl::Active {
-                    id, flag, incoming, outgoing
+                    id, flag: Flag::Initiator, incoming, outgoing
                 })
             })
+    }
+
+    pub(crate) fn receive(id: u64, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> MultiplexStream {
+        MultiplexStream(StreamImpl::Active {
+            id, flag: Flag::Receiver, incoming, outgoing
+        })
     }
 }
 
