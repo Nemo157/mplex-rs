@@ -23,7 +23,7 @@ pub struct Multiplexer<S: MsgIo> {
 impl<S: MsgIo> Multiplexer<S> {
     pub fn new(transport: S, initiator: bool) -> Multiplexer<S> {
         fn unreachable(_: ()) -> io::Error { unreachable!() }
-        let (out_sender, out_receiver) = mpsc::channel(1);
+        let (out_sender, out_receiver) = mpsc::channel(16);
         let session = Session::new(transport);
         let (session_sink, session_stream) = session.split();
         let forward = out_receiver.map_err(unreachable as _).forward(session_sink);
@@ -43,7 +43,7 @@ impl<S: MsgIo> Multiplexer<S> {
 
     pub fn new_stream(&mut self) -> impl Future<Item=MultiplexStream, Error=io::Error> {
         let id = self.next_id();
-        let (in_sender, in_receiver) = mpsc::channel(1);
+        let (in_sender, in_receiver) = mpsc::channel(16);
         self.stream_senders.insert(id, in_sender);
         MultiplexStream::initiate(id, in_receiver, self.out_sender.clone())
     }
@@ -83,7 +83,7 @@ impl<S: MsgIo> Stream for Multiplexer<S> {
                         }
                         Entry::Vacant(entry) => {
                             if msg.flag == Flag::NewStream {
-                                let (in_sender, in_receiver) = mpsc::channel(1);
+                                let (in_sender, in_receiver) = mpsc::channel(16);
                                 entry.insert(in_sender);
                                 return Ok(Async::Ready(Some(MultiplexStream::receive(msg.stream_id, in_receiver, self.out_sender.clone()))));
                             } else {
