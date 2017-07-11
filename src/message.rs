@@ -81,7 +81,7 @@ impl Encoder for Codec {
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let header = (item.stream_id << 3) & match item.flag {
+        let header = (item.stream_id << 3) | match item.flag {
             Flag::NewStream => 0,
             Flag::Receiver => 1,
             Flag::Initiator => 2,
