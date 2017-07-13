@@ -1,6 +1,6 @@
 use std::{io, mem};
 
-use bytes::Bytes;
+use bytes::BytesMut;
 use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
 use futures::unsync::mpsc;
 use msgio::MsgIo;
@@ -33,7 +33,7 @@ impl MultiplexStream {
         outgoing.send(Message {
                 stream_id: id,
                 flag: Flag::NewStream,
-                data: Bytes::new(),
+                data: BytesMut::new(),
             })
             .map_err(other)
             .map(move |outgoing| {
@@ -51,7 +51,7 @@ impl MultiplexStream {
 }
 
 impl Stream for MultiplexStream {
-    type Item = Vec<u8>;
+    type Item = BytesMut;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -60,7 +60,7 @@ impl Stream for MultiplexStream {
 }
 
 impl Sink for MultiplexStream {
-    type SinkItem = Vec<u8>;
+    type SinkItem = BytesMut;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -79,7 +79,7 @@ impl Sink for MultiplexStream {
 impl MsgIo for MultiplexStream { }
 
 impl Stream for StreamImpl {
-    type Item = Vec<u8>;
+    type Item = BytesMut;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -91,7 +91,7 @@ impl Stream for StreamImpl {
                     }
                     Some(msg) => {
                         if msg.flag != Flag::Close {
-                            return Ok(Async::Ready(Some(msg.data.to_vec())));
+                            return Ok(Async::Ready(Some(msg.data)));
                         }
                     }
                 }
@@ -108,7 +108,7 @@ impl Stream for StreamImpl {
 }
 
 impl Sink for StreamImpl {
-    type SinkItem = Vec<u8>;
+    type SinkItem = BytesMut;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -117,14 +117,14 @@ impl Sink for StreamImpl {
                 let msg = Message {
                     stream_id: id,
                     flag: flag,
-                    data: Bytes::from(item),
+                    data: BytesMut::from(item),
                 };
                 println!("mplex stream start_send {:?}", msg);
                 Ok(match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => AsyncSink::Ready,
                     AsyncSink::NotReady(msg) => {
                         println!("mplex stream start_send not ready");
-                        AsyncSink::NotReady(msg.data.to_vec())
+                        AsyncSink::NotReady(msg.data)
                     }
                 })
             }
@@ -150,7 +150,7 @@ impl Sink for StreamImpl {
                 let msg = Message {
                     stream_id: id,
                     flag: Flag::Close,
-                    data: Bytes::new(),
+                    data: BytesMut::new(),
                 };
                 match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => {

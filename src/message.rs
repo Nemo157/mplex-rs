@@ -1,6 +1,6 @@
 use std::io;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use tokio_io::codec::{ Decoder, Encoder };
 use varmint::{ len_u64_varint, len_usize_varint, ReadVarInt, WriteVarInt };
 
@@ -16,7 +16,7 @@ pub enum Flag {
 pub struct Message {
     pub stream_id: u64,
     pub flag: Flag,
-    pub data: Bytes,
+    pub data: BytesMut,
 }
 
 #[derive(Debug)]
@@ -70,7 +70,7 @@ impl Decoder for Codec {
         }
 
         let _discarded = src.split_to(prefix_len);
-        let data = src.split_to(len).freeze();
+        let data = src.split_to(len);
 
         Ok(Some(Message { stream_id, data, flag }))
     }
