@@ -1,6 +1,6 @@
 use std::{io, mem};
 
-use bytes::BytesMut;
+use bytes::Bytes;
 use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
 use futures::unsync::mpsc;
 use msgio::MsgIo;
@@ -33,7 +33,7 @@ impl MultiplexStream {
         outgoing.send(Message {
                 stream_id: id,
                 flag: Flag::NewStream,
-                data: BytesMut::new(),
+                data: Bytes::new(),
             })
             .map_err(other)
             .map(move |outgoing| {
@@ -51,7 +51,7 @@ impl MultiplexStream {
 }
 
 impl Stream for MultiplexStream {
-    type Item = BytesMut;
+    type Item = Bytes;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -60,7 +60,7 @@ impl Stream for MultiplexStream {
 }
 
 impl Sink for MultiplexStream {
-    type SinkItem = BytesMut;
+    type SinkItem = Bytes;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -79,7 +79,7 @@ impl Sink for MultiplexStream {
 impl MsgIo for MultiplexStream { }
 
 impl Stream for StreamImpl {
-    type Item = BytesMut;
+    type Item = Bytes;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -108,7 +108,7 @@ impl Stream for StreamImpl {
 }
 
 impl Sink for StreamImpl {
-    type SinkItem = BytesMut;
+    type SinkItem = Bytes;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -117,7 +117,7 @@ impl Sink for StreamImpl {
                 let msg = Message {
                     stream_id: id,
                     flag: flag,
-                    data: BytesMut::from(item),
+                    data: Bytes::from(item),
                 };
                 println!("mplex stream start_send {:?}", msg);
                 Ok(match outgoing.start_send(msg).map_err(other)? {
@@ -150,7 +150,7 @@ impl Sink for StreamImpl {
                 let msg = Message {
                     stream_id: id,
                     flag: Flag::Close,
-                    data: BytesMut::new(),
+                    data: Bytes::new(),
                 };
                 match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => {

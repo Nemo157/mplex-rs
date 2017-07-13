@@ -44,10 +44,11 @@ impl<S: MsgIo> Sink for Session<S> {
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         let mut buffer = BytesMut::new();
         Codec.encode(item, &mut buffer)?;
-        Ok(match self.transport.start_send(buffer)? {
+        Ok(match self.transport.start_send(buffer.freeze())? {
             AsyncSink::Ready => AsyncSink::Ready,
-            AsyncSink::NotReady(mut bytes) => {
-                let msg = Codec.decode(&mut bytes)?
+            AsyncSink::NotReady(bytes) => {
+                let msg = Codec.decode(&mut bytes.try_mut().unwrap())
+                    .unwrap()
                     .expect("We created it, it has to be good");
                 AsyncSink::NotReady(msg)
             }
