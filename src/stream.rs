@@ -1,14 +1,19 @@
-use std::{io, mem};
+use std::{cmp, mem};
+use std::io::{self, Cursor};
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
 use futures::unsync::mpsc;
-use msgio::MsgIo;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 use message::{ Message, Flag };
 
 #[derive(Debug)]
-pub struct MultiplexStream(StreamImpl);
+pub struct MultiplexStream {
+    done: bool,
+    buffer: Cursor<Bytes>,
+    inner: StreamImpl,
+}
 
 #[derive(Debug)]
 pub enum StreamImpl {
@@ -37,46 +42,80 @@ impl MultiplexStream {
             })
             .map_err(other)
             .map(move |outgoing| {
-                MultiplexStream(StreamImpl::Active {
-                    id, flag: Flag::Initiator, incoming, outgoing
-                })
+                MultiplexStream {
+                    done: false,
+                    buffer: Cursor::new(Bytes::new()),
+                    inner: StreamImpl::Active {
+                        id, flag: Flag::Initiator, incoming, outgoing
+                    },
+                }
             })
     }
 
     pub(crate) fn receive(id: u64, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> MultiplexStream {
-        MultiplexStream(StreamImpl::Active {
-            id, flag: Flag::Receiver, incoming, outgoing
-        })
+        MultiplexStream {
+            done: false,
+            buffer: Cursor::new(Bytes::new()),
+            inner: StreamImpl::Active {
+                id, flag: Flag::Receiver, incoming, outgoing
+            },
+        }
     }
 }
 
-impl Stream for MultiplexStream {
-    type Item = Bytes;
-    type Error = io::Error;
+impl io::Read for MultiplexStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.done {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stream is closed"));
+            }
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.0.poll()
+            if self.buffer.remaining() > 0 {
+                let len = cmp::min(self.buffer.remaining(), buf.len());
+                self.buffer.copy_to_slice(&mut buf[..len]);
+                return Ok(len);
+            }
+
+            match self.inner.poll()? {
+                Async::Ready(Some(buffer)) => {
+                    self.buffer = Cursor::new(buffer);
+                }
+                Async::Ready(None) => {
+                    self.done = true;
+                }
+                Async::NotReady => {
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, "no data ready"));
+                }
+            }
+        }
     }
 }
 
-impl Sink for MultiplexStream {
-    type SinkItem = Bytes;
-    type SinkError = io::Error;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        self.0.start_send(item)
+impl io::Write for MultiplexStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.inner.start_send(Bytes::from(buf))? {
+            AsyncSink::Ready => Ok(buf.len()),
+            AsyncSink::NotReady(_) => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream not ready to send")),
+        }
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        self.0.poll_complete()
-    }
-
-    fn close(&mut self) -> Poll<(), Self::SinkError> {
-        self.0.close()
+    fn flush(&mut self) -> io::Result<()> {
+        // TODO: This still doesn't ensure the message was fully sent over the session
+        match self.inner.poll_complete()? {
+            Async::Ready(()) => Ok(()),
+            Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "stream not done sending")),
+        }
     }
 }
 
-impl MsgIo for MultiplexStream { }
+impl AsyncRead for MultiplexStream {
+}
+
+impl AsyncWrite for MultiplexStream {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        self.inner.close()
+    }
+}
 
 impl Stream for StreamImpl {
     type Item = Bytes;
