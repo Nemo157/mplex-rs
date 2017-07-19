@@ -8,6 +8,3 @@ bytes = "0.4.4"
 futures = "0.1.14"
 tokio-io = "0.1.2"
 varmint = "0.1.2"
-
-[dependencies.msgio]
-path = "../msgio-rs/"

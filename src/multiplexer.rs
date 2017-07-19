@@ -4,27 +4,27 @@ use std::io;
 
 use futures::{ self, Future, Sink, Stream, Poll, Async, AsyncSink };
 use futures::unsync::mpsc;
-use msgio::MsgIo;
+use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::codec::{Framed, FramedParts};
 
 use stream::MultiplexStream;
-use message::{ Message, Flag };
-use session::Session;
+use message::{Codec, Message, Flag};
 
-pub struct Multiplexer<S: MsgIo> {
-    session_stream: futures::stream::SplitStream<Session<S>>,
+pub struct Multiplexer<S> where S: AsyncRead + AsyncWrite {
+    session_stream: futures::stream::SplitStream<Framed<S, Codec>>,
     initiator: bool,
     next_id: u64,
     stream_senders: HashMap<u64, mpsc::Sender<Message>>,
     busy_streams: Vec<u64>,
     out_sender: mpsc::Sender<Message>,
-    forward: futures::stream::Forward<futures::stream::MapErr<mpsc::Receiver<Message>, fn(()) -> io::Error>, futures::stream::SplitSink<Session<S>>>,
+    forward: futures::stream::Forward<futures::stream::MapErr<mpsc::Receiver<Message>, fn(()) -> io::Error>, futures::stream::SplitSink<Framed<S, Codec>>>,
 }
 
-impl<S: MsgIo> Multiplexer<S> {
-    pub fn new(transport: S, initiator: bool) -> Multiplexer<S> {
+impl<S> Multiplexer<S> where S: AsyncRead + AsyncWrite {
+    pub fn from_parts(parts: FramedParts<S>, initiator: bool) -> Multiplexer<S> {
         fn unreachable(_: ()) -> io::Error { unreachable!() }
         let (out_sender, out_receiver) = mpsc::channel(16);
-        let session = Session::new(transport);
+        let session = Framed::from_parts(parts, Codec);
         let (session_sink, session_stream) = session.split();
         let forward = out_receiver.map_err(unreachable as _).forward(session_sink);
         Multiplexer {
@@ -55,8 +55,7 @@ impl<S: MsgIo> Multiplexer<S> {
     }
 }
 
-
-impl<S: MsgIo> Stream for Multiplexer<S> {
+impl<S> Stream for Multiplexer<S> where S: AsyncRead + AsyncWrite {
     type Item = MultiplexStream;
     type Error = io::Error;
 
