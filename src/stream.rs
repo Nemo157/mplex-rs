@@ -158,11 +158,9 @@ impl Sink for StreamImpl {
                     flag: flag,
                     data: Bytes::from(item),
                 };
-                println!("mplex stream start_send {:?}", msg);
                 Ok(match outgoing.start_send(msg).map_err(other)? {
                     AsyncSink::Ready => AsyncSink::Ready,
                     AsyncSink::NotReady(msg) => {
-                        println!("mplex stream start_send not ready");
                         AsyncSink::NotReady(msg.data)
                     }
                 })
