@@ -67,7 +67,7 @@ impl io::Read for MultiplexStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
             if self.done {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stream is closed"));
+                return Ok(0);
             }
 
             if self.buffer.remaining() > 0 {
