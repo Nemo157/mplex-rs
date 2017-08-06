@@ -2,11 +2,11 @@ use std::{cmp, mem};
 use std::io::{self, Cursor};
 
 use bytes::{Buf, Bytes};
-use futures::{ Future, Sink, Stream, Poll, Async, StartSend, AsyncSink };
+use futures::{Future, Sink, Stream, Poll, Async, StartSend, AsyncSink};
 use futures::unsync::mpsc;
 use tokio_io::{AsyncRead, AsyncWrite};
 
-use message::{ Message, Flag };
+use message::{Message, Flag};
 
 #[derive(Debug)]
 pub struct MultiplexStream {
@@ -16,7 +16,7 @@ pub struct MultiplexStream {
 }
 
 #[derive(Debug)]
-pub enum StreamImpl {
+pub(crate) enum StreamImpl {
     Active {
         id: u64,
         flag: Flag,

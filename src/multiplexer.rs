@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::io;
 
-use futures::{ self, Future, Sink, Stream, Poll, Async, AsyncSink };
+use futures::{self, Future, Sink, Stream, Poll, Async, AsyncSink};
 use futures::unsync::mpsc;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::{Framed, FramedParts};
 
+use codec::Codec;
+use message::{Message, Flag};
 use stream::MultiplexStream;
-use message::{Codec, Message, Flag};
 
 pub struct Multiplexer<S> where S: AsyncRead + AsyncWrite {
     session_stream: futures::stream::SplitStream<Framed<S, Codec>>,
