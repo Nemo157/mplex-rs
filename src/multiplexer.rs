@@ -25,7 +25,7 @@ impl<S> Multiplexer<S> where S: AsyncRead + AsyncWrite {
     pub fn from_parts(parts: FramedParts<S>, initiator: bool) -> Multiplexer<S> {
         fn unreachable(_: ()) -> io::Error { unreachable!() }
         let (out_sender, out_receiver) = mpsc::channel(16);
-        let session = Framed::from_parts(parts, Codec);
+        let session = Framed::from_parts(parts, Codec::new());
         let (session_sink, session_stream) = session.split();
         let forward = out_receiver.map_err(unreachable as _).forward(session_sink);
         Multiplexer {

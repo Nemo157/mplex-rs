@@ -1,4 +1,3 @@
-use std::io;
 use std::convert::TryFrom;
 
 use bytes::Bytes;
@@ -30,7 +29,7 @@ impl Into<u64> for Flag {
 }
 
 impl TryFrom<u64> for Flag {
-    type Error = io::Error;
+    type Error = &'static str;
     fn try_from(val: u64) -> Result<Self, Self::Error> {
         Ok(match val {
             0 => Flag::NewStream,
@@ -38,7 +37,7 @@ impl TryFrom<u64> for Flag {
             2 => Flag::Initiator,
             4 => Flag::Close,
             3 | 5 | 6 | 7 => {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown flag"));
+                return Err("unknown flag");
             }
             _ => {
                 panic!("Flag should only be converted from a 3-bit value")
