@@ -29,6 +29,7 @@ enum State {
     },
 }
 
+#[derive(Debug)]
 pub(crate) struct Codec {
     state: Result<State, String>
 }

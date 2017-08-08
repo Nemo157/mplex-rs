@@ -11,6 +11,7 @@ use codec::Codec;
 use message::{Message, Flag};
 use stream::MultiplexStream;
 
+#[derive(Debug)]
 pub struct Multiplexer<S> where S: AsyncRead + AsyncWrite {
     session_stream: futures::stream::SplitStream<Framed<S, Codec>>,
     initiator: bool,
