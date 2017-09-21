@@ -5,6 +5,6 @@ version = "0.1.0"
 
 [dependencies]
 bytes = "0.4.4"
-futures = "0.1.14"
+futures-await = { git = "https://github.com/Nemo157/futures-await", rev = "alternate-signatures" }
 tokio-io = "0.1.2"
 varmint = "0.1.2"
