@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fmt;
 use std::io;
 
 use futures::{self, Future, Sink, Stream, Poll, Async, AsyncSink};
@@ -11,10 +12,9 @@ use codec::Codec;
 use message::{Message, Flag};
 use stream::MultiplexStream;
 
-#[derive(Debug)]
 pub struct Multiplexer<S> where S: AsyncRead + AsyncWrite {
     session_stream: futures::stream::SplitStream<Framed<S, Codec>>,
-    initiator: bool,
+    is_initiator: bool,
     next_id: u64,
     stream_senders: HashMap<u64, mpsc::Sender<Message>>,
     busy_streams: Vec<u64>,
@@ -23,7 +23,7 @@ pub struct Multiplexer<S> where S: AsyncRead + AsyncWrite {
 }
 
 impl<S> Multiplexer<S> where S: AsyncRead + AsyncWrite {
-    pub fn from_parts(parts: FramedParts<S>, initiator: bool) -> Multiplexer<S> {
+    pub fn from_parts(parts: FramedParts<S>, is_initiator: bool) -> Multiplexer<S> {
         fn unreachable(_: ()) -> io::Error { unreachable!() }
         let (out_sender, out_receiver) = mpsc::channel(16);
         let session = Framed::from_parts(parts, Codec::new());
@@ -33,14 +33,14 @@ impl<S> Multiplexer<S> where S: AsyncRead + AsyncWrite {
             next_id: 0,
             stream_senders: Default::default(),
             busy_streams: Default::default(),
-            session_stream, initiator, out_sender, forward,
+            session_stream, is_initiator, out_sender, forward,
         }
     }
 
     fn next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 2;
-        if self.initiator { id } else { id + 1 }
+        if self.is_initiator { id } else { id + 1 }
     }
 
     pub fn new_stream(&mut self) -> impl Future<Item=MultiplexStream, Error=io::Error> {
@@ -137,4 +137,27 @@ impl<S> Stream for Multiplexer<S> where S: AsyncRead + AsyncWrite {
             }
         }
     }
+}
+
+impl<S> fmt::Debug for Multiplexer<S> where S: AsyncRead + AsyncWrite + fmt::Debug {
+   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+       if f.alternate() {
+           f.debug_struct("Multiplexer")
+               .field("is_initiator", &self.is_initiator)
+               .field("next_id", &self.next_id)
+               .field("streams", &self.stream_senders.keys())
+               .field("busy_streams", &self.busy_streams)
+               .finish()
+       } else {
+           f.debug_struct("Multiplexer")
+               .field("session_stream", &self.session_stream)
+               .field("is_initiator", &self.is_initiator)
+               .field("next_id", &self.next_id)
+               .field("stream_senders", &self.stream_senders)
+               .field("busy_streams", &self.busy_streams)
+               .field("out_sender", &self.out_sender)
+               .field("forward", &self.forward)
+               .finish()
+       }
+   }
 }

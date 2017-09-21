@@ -16,7 +16,6 @@ pub struct MultiplexStream {
     sink: SinkImpl,
 }
 
-#[derive(Debug)]
 pub(crate) enum SinkImpl {
     Active {
         id: u64,
@@ -217,5 +216,30 @@ impl fmt::Debug for MultiplexStream {
            .field("stream", &"<omitted>")
            .field("sink", &self.sink)
            .finish()
+   }
+}
+
+impl fmt::Debug for SinkImpl {
+   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+       match *self {
+           SinkImpl::Active { ref id, ref flag, ref outgoing } =>
+               f.debug_struct("Active")
+                   .field("id", id)
+                   .field("flag", flag)
+                   .field("outgoing", outgoing)
+                   .finish(),
+           SinkImpl::ClosingMessage { ref id, ref outgoing } =>
+               f.debug_struct("ClosingMessage")
+                   .field("id", id)
+                   .field("outgoing", outgoing)
+                   .finish(),
+           SinkImpl::ClosingOutgoing { ref outgoing } =>
+               f.debug_struct("ClosingOutgoing")
+                   .field("outgoing", outgoing)
+                   .finish(),
+           SinkImpl::Closed =>
+               f.debug_struct("Closed")
+                   .finish(),
+       }
    }
 }
