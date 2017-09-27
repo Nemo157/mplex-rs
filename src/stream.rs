@@ -10,6 +10,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use message::{Message, Flag};
 
 pub struct MultiplexStream {
+    id: u64,
     done: bool,
     buffer: Cursor<Bytes>,
     stream: Box<Stream<Item=Bytes, Error=io::Error>>,
@@ -42,6 +43,7 @@ impl MultiplexStream {
             .map_err(other)
             .map(move |outgoing| {
                 MultiplexStream {
+                    id,
                     done: false,
                     buffer: Cursor::new(Bytes::new()),
                     stream: stream_impl(Flag::Receiver, incoming),
@@ -52,11 +54,18 @@ impl MultiplexStream {
 
     pub(crate) fn receive(id: u64, incoming: mpsc::Receiver<Message>, outgoing: mpsc::Sender<Message>) -> MultiplexStream {
         MultiplexStream {
+            id,
             done: false,
             buffer: Cursor::new(Bytes::new()),
             stream: stream_impl(Flag::Initiator, incoming),
             sink: SinkImpl::Active { id, flag: Flag::Receiver, outgoing },
         }
+    }
+
+    /// An id for this stream that is unique in the context of this streams
+    /// parent multiplexer
+    pub fn id(&self) -> u64 {
+        self.id
     }
 }
 
