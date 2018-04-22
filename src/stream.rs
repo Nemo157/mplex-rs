@@ -3,7 +3,7 @@ use std::io::{self, Cursor};
 
 use bytes::{Buf, Bytes};
 use futures::{Future, Sink, Stream, Poll, Async, StartSend, AsyncSink};
-use futures::prelude::{async, stream_yield};
+use futures::prelude::{async_stream, stream_yield};
 use futures::unsync::mpsc;
 use tokio_io::{AsyncRead, AsyncWrite};
 
@@ -123,8 +123,8 @@ impl AsyncWrite for MultiplexStream {
     }
 }
 
-#[async]
-fn stream_impl(flag: Flag, incoming: mpsc::Receiver<Message>) -> Box<Stream<Item=Bytes, Error=io::Error>> {
+#[async_stream(item=Bytes, boxed)]
+fn stream_impl(flag: Flag, incoming: mpsc::Receiver<Message>) -> io::Result<()> {
     #[async]
     for msg in incoming.map_err(unknown) {
         if msg.flag == flag {
